@@ -1,10 +1,7 @@
-#ifndef CLUSTERING_H
-#define CLUSTERING_H
+#pragma once
 
 #include <vector>
 #include <random>
-#include <cmath>
-#include <limits>
 
 #include "omp.h"
 
@@ -14,6 +11,8 @@ class KMeans{
     using ValueType = typename SampleType::value_type;
     static inline const ValueType ZERO{0};
     std::mt19937 generator;
+    int nThreads;
+    std::vector<std::vector<ValueType>>  clustersDistsBuffer;
 
 
     /** Находит граничные значения данных
@@ -35,27 +34,13 @@ class KMeans{
 
     // clusterDistInfo - пара{кластер, расстояние до него}
     using clusterDistInfo = std::pair<int, ValueType>;
-#define defaultDistInfo clusterDistInfo{-1, std::numeric_limits<ValueType>::max()}
-
-    clusterDistInfo distInfoMin(const clusterDistInfo& a, const clusterDistInfo& b){
-        return a.second < b.second ? a : b;
-    }
-
 
     /** Находит индекс ближайшего кластера
      * 
      * @param [elem] Объект
-     * @note Распараллелено
     */
     int predict(const SampleType& elem) {
         clusterDistInfo nearestCluster = {0, getDistance(elem, clusterCenters.front())};
-        clusterDistInfo defaultValue = nearestCluster;
-
-#pragma omp declare reduction \
-    (minDistInfo:clusterDistInfo:omp_out=distInfoMin(omp_out, omp_in)) \
-    initializer(omp_priv = defaultDistInfo)
-
-#pragma omp parallel for reduction(minDistInfo:nearestCluster)
         for (auto clusterID = 0u; clusterID < clusterCenters.size(); ++clusterID) {
             ValueType dist = getDistance(elem, clusterCenters[clusterID]);
             if (dist < nearestCluster.second) {
@@ -94,14 +79,38 @@ class KMeans{
     /** Пересчитывает расстояния от объектов до центроидов их кластеров
     * 
     * @param [data] набор объектов
+    * @note Распараллеленно
     * @returns true, если расстояния изменились, false иначе
     */
     template <typename SampleCollection>
     bool calcDists(const SampleCollection& data) {
+
+        size_t clusterID;
+        size_t sampleID;
+        size_t dataSize = data.size();
         std::vector<ValueType> newDists(nClusters, ZERO);
-        for (auto& p : data) {
-            int predictedCluster = predict(p);
-            newDists[predictedCluster] += getDistance(p, clusterCenters[predictedCluster]);
+        
+#pragma omp parallel
+        {
+#pragma omp for
+            for (clusterID = 0; clusterID < nClusters; ++clusterID) {
+                for (int threadID = 0; threadID < nThreads; ++threadID) {
+                    clustersDistsBuffer[threadID][clusterID] = ZERO;
+                }
+            }
+    
+#pragma omp for
+            for (sampleID = 0; sampleID < dataSize; ++sampleID) {
+                int predictedCluster = predict(data[sampleID]);
+                clustersDistsBuffer[omp_get_thread_num()][predictedCluster] +=
+                    getDistance(data[sampleID], clusterCenters[predictedCluster]);
+            }
+
+#pragma omp for
+            for (clusterID = 0; clusterID < nClusters; ++clusterID) {
+                for (int threadID = 0; threadID < nThreads; ++threadID)
+                    newDists[clusterID] += clustersDistsBuffer[threadID][clusterID];
+            }
         }
 
         bool has_changed = newDists != clusterDists;
@@ -126,7 +135,7 @@ class KMeans{
     std::vector<ValueType> clusterDists;
 
 
-    KMeans(int nClusters_, int nThreads = omp_get_max_threads(), bool isTesting = false)
+    KMeans(int nClusters_, int nThreads_ = omp_get_max_threads(), bool isTesting = false)
         : nClusters{nClusters_}, clusterCenters(nClusters_), clusterDists(nClusters_)
     {
         generator.seed(0);
@@ -134,7 +143,9 @@ class KMeans{
             std::random_device rd;
             generator.seed(rd());
         }
-        omp_set_num_threads(nThreads);
+        omp_set_num_threads(nThreads_);
+        nThreads = nThreads_;
+        clustersDistsBuffer.assign(nThreads, std::vector<ValueType>(nClusters, ZERO));
     }
 
 
@@ -148,42 +159,67 @@ class KMeans{
         auto [lowerLimits, upperLimits] = getLimits(data);
         initCenters(lowerLimits, upperLimits);
         calcDists(data);
+
+        using Statistics = struct{SampleType sum{}; int count = 0;};
+        std::vector<std::vector<Statistics>> clustersStatsBuffer(nThreads,
+                                                                std::vector<Statistics>(nClusters));
         
         bool stop_flag;
         do {
             stop_flag = true;
-
-            using Statistics = struct{SampleType sum{}; int count = 0;};
-            std::vector<Statistics> clustersStats(nClusters);
-
-            auto data_size = data.size();
-            auto clustersStatsSize = clustersStats.size();
-            auto clusterCentersSize = clusterCenters.size();
-            
-            for (auto recordID = 0u; recordID < data_size; ++recordID) {
-                int predictedCluster = predict(data[recordID]);
-                for (auto dim = 0u; dim < data[recordID].size(); ++ dim) {
-                    clustersStats[predictedCluster].sum[dim] += data[recordID][dim];
-                }
-                clustersStats[predictedCluster].count++;
-            }
+            size_t dataSize = data.size();
+            size_t sampleID;
+            size_t clusterID;
+            std::vector<int> predictions(data.size());
 
 #pragma omp parallel
             {
 #pragma omp for
-                for (auto statsID = 0u; statsID < clustersStatsSize; ++statsID) {
-                    for (auto dim = 0u; dim < clustersStats[statsID].sum.size(); ++dim) {
-                        if (clustersStats[statsID].count == 0)
-                            clustersStats[statsID].sum[dim] = ZERO;
-                        else
-                            clustersStats[statsID].sum[dim] /= clustersStats[statsID].count;
+                for (sampleID = 0u; sampleID < dataSize; ++sampleID) {
+                    predictions[sampleID] = predict(data[sampleID]); 
+                }
+
+#pragma omp for
+                for (clusterID = 0; clusterID < nClusters; ++clusterID) {
+                    for (int nThread = 0; nThread < omp_get_num_threads(); ++nThread) {
+                        for (auto dim = 0u; dim < data[0].size(); ++ dim) {
+                            clustersStatsBuffer[nThread][clusterID].sum[dim] = ZERO;
+                        }
+                        clustersStatsBuffer[nThread][clusterID].count = 0;
                     }
                 }
 
 #pragma omp for
-                for (auto clusterID = 0u; clusterID < clusterCentersSize; ++clusterID) {
-                    if (clustersStats[clusterID].count != 0)
-                        clusterCenters[clusterID] = clustersStats[clusterID].sum;
+                for (sampleID = 0u; sampleID < dataSize; ++sampleID) {
+                    int predictedCluster = predictions[sampleID];
+                    for (auto dim = 0u; dim < data[sampleID].size(); ++ dim) {
+                        clustersStatsBuffer[omp_get_thread_num()][predictedCluster].sum[dim] += data[sampleID][dim];
+                    }
+                    clustersStatsBuffer[omp_get_thread_num()][predictedCluster].count++;
+                }
+
+#pragma omp for
+                for (clusterID = 0; clusterID < nClusters; ++clusterID) {
+                    for (int nThread = 1; nThread < nThreads; ++nThread) {
+                        for (auto dim = 0u; dim < data[0].size(); ++ dim) {
+                            clustersStatsBuffer[0][clusterID].sum[dim] +=
+                                clustersStatsBuffer[nThread][clusterID].sum[dim];
+                        }
+                        clustersStatsBuffer[0][clusterID].count += clustersStatsBuffer[nThread][clusterID].count;
+                    }
+                }
+
+#pragma omp for
+                for (clusterID = 0u; clusterID < nClusters; ++clusterID) {
+                    for (auto dim = 0u; dim < clustersStatsBuffer[0][clusterID].sum.size(); ++dim) {
+                        if (clustersStatsBuffer[0][clusterID].count == 0)
+                            clustersStatsBuffer[0][clusterID].sum[dim] = ZERO;
+                        else
+                            clustersStatsBuffer[0][clusterID].sum[dim]
+                                /= clustersStatsBuffer[0][clusterID].count;
+                    }
+                    if (clustersStatsBuffer[0][clusterID].count != 0)
+                        clusterCenters[clusterID] = clustersStatsBuffer[0][clusterID].sum;
                 }
             }
             
@@ -214,16 +250,14 @@ class KMeans{
         return results;
     }
 
-    void PrintClusterCenters() {
-        std::cout << "[";
+    void PrintClusterCenters(std::ostream& output = std::cout) {
+        output << "[";
         for (auto clusterID = 0u; clusterID < clusterCenters.size(); ++clusterID) {
-            std::cout << (clusterID == 0 ? "[ " : " [ ");
+            output << (clusterID == 0 ? "[ " : " [ ");
             for (const auto& val : clusterCenters[clusterID])
-                std::cout << val << " ";
-            std::cout << (clusterID + 1 == clusterCenters.size() ? "]" : "]\n");
+                output << val << " ";
+            output << (clusterID + 1 == clusterCenters.size() ? "]" : "]\n");
         }
-        std::cout << "]\n";
+        output << "]\n";
     }
 };
-
-#endif
