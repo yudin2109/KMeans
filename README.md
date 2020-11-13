@@ -32,17 +32,24 @@ int main() {
 ```
 
 ## Proof of correctness
-For data set in [data4](data/data4.in)
-![alt text](https://github.com/yudin2109/KMeans/blob/main/example_plot.png)
+For data set in [simple example](simple_example.in)
+![alt text](https://github.com/yudin2109/KMeans/blob/main/simple_example_plot.png)
 
 ## Time measurements
-| Data set               |  1 Thread   |  2 Threads  |  3 Threads  |  4 Threads  |  5 Threads  |  6 Threads  |  7 Threads  |  8 Threads  |
-| -----------------------|:-----------:| -----------:| -----------:| -----------:| -----------:| -----------:| -----------:| -----------:|
-| [data1](data/data1.in) |  0.0001549s |  0.0000936s |  0.0000804s |  0.0001055s |  0.0000950s |  0.0001088s |  0.0001092s |  0.0000838s | 
-| [data2](data/data2.in) |  0.0850907s |  0.0444714s |  0.0313023s |  0.0248829s |  0.0390621s |  0.0332199s |  0.0284214s |  0.0249516s | 
-| [data3](data/data3.in) |  0.6495762s |  0.3333516s |  0.2282126s |  0.1723314s |  0.2822682s |  0.2417411s |  0.2027649s |  0.1839266s | 
-| [data4](data/data4.in) | 17.7928305s |  8.9664694s |  6.1364073s |  4.6102756s |  7.0781330s |  6.2111925s |  5.4573416s |  4.8964306s | 
-| [data5](data/data5.in) | 59.5019928s | 34.3834907s | 23.7593926s | 16.7141950s | 25.8053340s | 20.9583034s | 19.5719942s | 18.7267782s | 
+| Data set               | 1 Thread  | 2 Threads | 3 Threads | 4 Threads | 5 Threads | 6 Threads | 7 Threads | 8 Threads |
+| -----------------------|:---------:| ---------:| ---------:| ---------:| ---------:| ---------:| ---------:| ---------:|
+| [data1](data/data1.in) |  0.00015s |  0.00009s |  0.00008s |  0.00010s |  0.00009s |  0.00010s |  0.00010s |  0.00008s | 
+| [data2](data/data2.in) |  0.08509s |  0.04447s |  0.03130s |  0.02488s |  0.03906s |  0.03321s |  0.02842s |  0.02495s | 
+| [data3](data/data3.in) |  0.64957s |  0.33335s |  0.22821s |  0.17233s |  0.28226s |  0.24174s |  0.20276s |  0.18392s | 
+| [data4](data/data4.in) | 17.79283s |  8.96646s |  6.13640s |  4.61027s |  7.07813s |  6.21119s |  5.45734s |  4.89643s | 
+| [data5](data/data5.in) | 59.50199s | 34.38349s | 23.75939s | 16.71419s | 25.80533s | 20.95830s | 19.57199s | 18.72677s |
+
+## Acceleration plots
+Where `acceleration_i = Time(i threads) / Time(1 thread)`
+
+![alt text](https://github.com/yudin2109/KMeans/blob/main/data4_stats.png)
+
+![alt text](https://github.com/yudin2109/KMeans/blob/main/data5_stats.png)
 
 ## Documentation
 ```cpp
